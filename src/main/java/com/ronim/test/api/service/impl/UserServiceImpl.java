@@ -1,6 +1,7 @@
 package com.ronim.test.api.service.impl;
 
 import com.ronim.test.api.dto.AddUserDTO;
+import com.ronim.test.api.dto.UpdateUserDTO;
 import com.ronim.test.api.entity.User;
 import com.ronim.test.api.exception.BadRequestException;
 import com.ronim.test.api.exception.NotFoundException;
@@ -33,15 +34,16 @@ public class UserServiceImpl implements UserService {
     @Override
     public String addUser(AddUserDTO dto) {
 
-        String name = validateNameField(dto);
-        String ssn = validateAndExtractSsn(dto);
-        LocalDate dob = validateDateOfBirth(dto);
-        String createdBy = validateAndConstructCreatedBy(dto);
+        String name = validateAndExtractNameField(dto.getUsername());
+        String ssn = validateAndExtractSsn(dto.getSocialSecurityNumber());
+        LocalDate dob = validateAndExtractDateOfBirth(dto.getDateOfBirth());
+        String createdBy = validateAndConstructTedBy(dto.getCreatedBy());
 
         User user = User.builder()
                 .username(name)
                 .socialSecurityNumber(ssn)
                 .dateOfBirth(dob)
+                .deleted(false)
                 .createdAt(LocalDate.now())
                 .createdBy(createdBy)
                 .build();
@@ -51,33 +53,33 @@ public class UserServiceImpl implements UserService {
         return user.getSocialSecurityNumber();
     }
 
-    private LocalDate validateDateOfBirth(AddUserDTO dto) {
-        if(dto.getDateOfBirth() == null) {
+    private LocalDate validateAndExtractDateOfBirth(String dobStr) {
+        if(dobStr == null) {
             throw BadRequestException.builder()
                     .field(USER_DOB_FIELD)
-                    .value(dto.getDateOfBirth())
+                    .value(dobStr)
                     .build();
         }
 
         try {
-            LocalDate dob = LocalDate.parse(dto.getDateOfBirth(), DateTimeFormatter.ISO_DATE);
+            LocalDate dob = LocalDate.parse(dobStr, DateTimeFormatter.ISO_DATE);
             return dob;
         } catch (Exception e) {
             throw BadRequestException.builder()
                     .field(USER_DOB_FIELD)
-                    .value(dto.getDateOfBirth())
+                    .value(dobStr)
                     .build();
         }
     }
 
-    private String validateAndExtractSsn(AddUserDTO dto) {
-        if( dto.getSocialSecurityNumber() == null ) {
+    private String validateAndExtractSsn(String ssn) {
+        if( ssn == null ) {
             throw BadRequestException.builder()
                     .field(USER_SSN_FIELD)
                     .value("empty")
                     .build();
         }
-        String ssn = dto.getSocialSecurityNumber();
+
         if(!StringUtils.isNumeric(ssn)) {
             throw BadRequestException.builder()
                     .field(USER_SSN_FIELD)
@@ -95,16 +97,18 @@ public class UserServiceImpl implements UserService {
         Optional<User> user = this.userRepository.findById(ssn);
 
         if(user.isPresent()) {
-            throw SsnConflictException.builder()
-                    .value(ssn)
-                    .build();
+            var u = user.get();
+            if(!u.getDeleted()) {
+                throw SsnConflictException.builder()
+                        .value(ssn)
+                        .build();
+            }
         }
 
         return ssn;
     }
 
-    private String validateNameField(AddUserDTO dto) {
-        String username = dto.getUsername();
+    private String validateAndExtractNameField(String username) {
         if (StringUtils.isEmpty(username)) {
             throw BadRequestException.builder()
                     .field(USER_NAME_FIELD)
@@ -126,8 +130,8 @@ public class UserServiceImpl implements UserService {
         return username;
     }
 
-    private String validateAndConstructCreatedBy(AddUserDTO dto) {
-        String createdBy = dto.getCreatedBy();
+    private String validateAndConstructTedBy(String createdBy) {
+
         if (StringUtils.isEmpty(createdBy)) {
             return SPRING_BOOT_TEST;
         }
@@ -144,10 +148,55 @@ public class UserServiceImpl implements UserService {
     public User getUser(String ssn) {
         ssn = StringUtils.leftPad(ssn, SSN_LENGTH, PAD_SSN);
         String finalSsn = ssn;
-        return this.userRepository.findById(ssn).orElseThrow(
+        User user =  this.userRepository.findById(ssn).orElseThrow(
                 () -> NotFoundException.builder()
                         .value(finalSsn)
                         .build()
         );
+
+        if(user.getDeleted()) {
+            throw NotFoundException.builder()
+                    .value(finalSsn)
+                    .build();
+        }
+
+        return user;
+    }
+
+    @Override
+    public User updateUser(UpdateUserDTO dto) {
+        String ssn = StringUtils.leftPad(dto.getSocialSecurityNumber(), SSN_LENGTH, PAD_SSN);
+        Optional<User> opUser = userRepository.findById(ssn);
+        if(opUser.isEmpty() || opUser.get().getDeleted()) {
+            throw NotFoundException.builder()
+                    .value(dto.getSocialSecurityNumber())
+                    .build();
+        }
+        String name = validateAndExtractNameField(dto.getUsername());
+        LocalDate dob = validateAndExtractDateOfBirth(dto.getDateOfBirth());
+        String updatedBy = validateAndConstructTedBy(dto.getUpdatedBy());
+
+        User user = opUser.get();
+        user.setUsername(name);
+        user.setDateOfBirth(dob);
+        user.setUpdatedAt(LocalDate.now());
+        user.setUpdateBy(updatedBy);
+        this.userRepository.save(user);
+
+        return user;
+    }
+
+    @Override
+    public void deleteUser(String ssn) {
+        String lssn = StringUtils.leftPad(ssn, SSN_LENGTH, PAD_SSN);
+        Optional<User> opUser = userRepository.findById(lssn);
+        if(opUser.isEmpty() || opUser.get().getDeleted()) {
+            throw NotFoundException.builder()
+                    .value(ssn)
+                    .build();
+        }
+        User user = opUser.get();
+        user.setDeleted(true);
+        this.userRepository.save(user);
     }
 }
